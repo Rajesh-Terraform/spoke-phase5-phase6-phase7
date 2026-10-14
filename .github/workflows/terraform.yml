@@ -44,8 +44,21 @@ jobs:
       - name: Validate configuration
         run: terraform validate
 
+      - name: Explain deployment trigger
+        if: github.event_name != 'workflow_dispatch'
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          {
+            echo "## Terraform deployment not started"
+            echo
+            echo "This run was triggered by \`$EVENT_NAME\`, so it ran validation only."
+            echo "To run AWS Terraform plan/apply, use **Actions → Terraform → Run workflow**."
+            echo "Deployment also requires the \`AWS_ROLE_ARN\`, \`TF_STATE_BUCKET\`, and \`TF_STATE_LOCK_TABLE\` secrets."
+          } >> "$GITHUB_STEP_SUMMARY"
+
   deploy:
-    name: Terraform ${{ inputs.action }}
+    name: AWS Terraform deployment (manual)
     if: github.event_name == 'workflow_dispatch' && (inputs.action != 'apply' || github.ref == 'refs/heads/main')
     needs: validate
     runs-on: ubuntu-latest
