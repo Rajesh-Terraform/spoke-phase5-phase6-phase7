@@ -45,8 +45,11 @@ jobs:
         run: terraform validate
 
   deploy:
-    name: Terraform ${{ inputs.action }}
-    if: github.event_name == 'workflow_dispatch' && (inputs.action != 'apply' || github.ref == 'refs/heads/main')
+    name: Terraform ${{ inputs.action || 'plan' }}
+    if: >-
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'workflow_dispatch' &&
+      (inputs.action != 'apply' || github.ref == 'refs/heads/main'))
     needs: validate
     runs-on: ubuntu-latest
     environment: terraform
@@ -93,7 +96,7 @@ jobs:
           -backend-config="encrypt=true"
 
       - name: Create full Terraform plan
-        if: inputs.action == 'plan'
+        if: inputs.action != 'apply'
         run: terraform plan -input=false -out=tfplan
 
       - name: Read phase 7 setting
