@@ -46,29 +46,29 @@ jobs:
 
       - name: Check AWS deployment configuration
         env:
-          AWS_ROLE_ARN: ${{ secrets.AWS_ROLE_ARN }}
-          TF_STATE_BUCKET: ${{ secrets.TF_STATE_BUCKET }}
-          TF_STATE_LOCK_TABLE: ${{ secrets.TF_STATE_LOCK_TABLE }}
+          AWS_ROLE_ARN: ${{ secrets.AWS_ROLE_ARN || vars.AWS_ROLE_ARN }}
+          TF_STATE_BUCKET: ${{ secrets.TF_STATE_BUCKET || vars.TF_STATE_BUCKET }}
+          TF_STATE_LOCK_TABLE: ${{ secrets.TF_STATE_LOCK_TABLE || vars.TF_STATE_LOCK_TABLE }}
         run: |
           missing=()
           [[ -n "$AWS_ROLE_ARN" ]] || missing+=("AWS_ROLE_ARN")
           [[ -n "$TF_STATE_BUCKET" ]] || missing+=("TF_STATE_BUCKET")
           [[ -n "$TF_STATE_LOCK_TABLE" ]] || missing+=("TF_STATE_LOCK_TABLE")
           if (( ${#missing[@]} > 0 )); then
-            printf '::error::Missing GitHub Actions secrets: %s\n' "${missing[*]}"
+            printf '::error::Missing GitHub Actions secrets or variables: %s\n' "${missing[*]}"
             exit 1
           fi
 
       - name: Configure AWS credentials with OIDC
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN || vars.AWS_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION || 'us-east-1' }}
 
       - name: Initialize remote state
         env:
-          TF_STATE_BUCKET: ${{ secrets.TF_STATE_BUCKET }}
-          TF_STATE_LOCK_TABLE: ${{ secrets.TF_STATE_LOCK_TABLE }}
+          TF_STATE_BUCKET: ${{ secrets.TF_STATE_BUCKET || vars.TF_STATE_BUCKET }}
+          TF_STATE_LOCK_TABLE: ${{ secrets.TF_STATE_LOCK_TABLE || vars.TF_STATE_LOCK_TABLE }}
           AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
         run: >-
           terraform init -reconfigure -input=false

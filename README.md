@@ -47,7 +47,7 @@ Peering is configured for VPCs in the same AWS account and region. Supply the hu
 
 `.github/workflows/terraform.yml` runs formatting checks, initialization, and validation on pushes and pull requests without AWS credentials. AWS deployment is a separate manual workflow, `.github/workflows/apply-phases.yml`, so validation runs do not show a skipped deployment job. To deploy, open **Actions → Apply phases 5, 6, and 7 → Run workflow**, select branch `main`, then choose `apply`. Choose `plan` for a read-only plan. Deployment requires the AWS role and remote state secrets below. An apply runs in order: phase 5 VPC/subnets, phase 6 internet/NAT routing, then phase 7 hub peering when enabled, followed by a full Terraform plan. Review the final plan; Terraform warns that staged targeted operations can leave other changes unapplied.
 
-Configure these repository secrets:
+Configure these values in **Settings → Secrets and variables → Actions**. Each value can be a repository/environment secret or a repository/environment variable; the workflow checks secrets first, then variables. These three values identify infrastructure and the IAM role, so variables are acceptable if you prefer:
 
 - `AWS_ROLE_ARN`: IAM role for GitHub Actions to assume using GitHub OIDC. Restrict its trust policy to this repository and grant only the Terraform permissions needed.
 - `TF_STATE_BUCKET`: existing, versioned S3 bucket for Terraform state.
@@ -76,7 +76,7 @@ For OIDC authentication, create the GitHub OIDC identity provider in AWS IAM wit
 }
 ```
 
-Replace `<AWS_ACCOUNT_ID>` with your AWS account ID. Set `AWS_ROLE_ARN` to the full ARN of this role, and ensure the role also has permissions for the S3 state bucket, DynamoDB lock table, and Terraform-managed VPC resources. Add the three secrets under the repository's **Settings → Secrets and variables → Actions** (or as secrets in the `terraform` environment).
+Replace `<AWS_ACCOUNT_ID>` with your AWS account ID. Set `AWS_ROLE_ARN` to the full ARN of this role, and ensure the role also has permissions for the S3 state bucket, DynamoDB lock table, and Terraform-managed VPC resources. Add all three values using the exact names above. If using environment-scoped values, create them in the `terraform` environment because the deploy job targets that environment.
 
 Configure the repository variable `AWS_REGION` (for example, `us-east-1`). For a non-default GitHub Actions configuration, set optional repository variables `TF_VAR_PROJECT_NAME`, `TF_VAR_VPC_CIDR_BLOCK`, `TF_VAR_AVAILABILITY_ZONES`, `TF_VAR_PUBLIC_SUBNET_CIDRS`, and `TF_VAR_PRIVATE_SUBNET_CIDRS`. List values must be JSON arrays, such as `["us-east-1a","us-east-1b"]`. To enable phase 7 in Actions, set `TF_VAR_HUB_PEERING` to a JSON object, for example `{"enabled":true,"vpc_id":"vpc-0123456789abcdef0","cidr_block":"10.0.0.0/16","route_table_ids":["rtb-0123456789abcdef0"]}`. Configure the workflow's `terraform` GitHub Environment with required reviewers if applies need approval. Applies are allowed only from the `main` branch. The workflow uses one remote state file for this root.
 
