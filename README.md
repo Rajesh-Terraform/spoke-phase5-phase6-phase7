@@ -45,7 +45,7 @@ Peering is configured for VPCs in the same AWS account and region. Supply the hu
 
 ## GitHub Actions
 
-`.github/workflows/terraform.yml` runs `fmt`, `init`, and `validate` for all phases on pushes and pull requests. It does not create AWS resources for pull requests. To run a plan or apply, manually dispatch **Terraform** from the GitHub Actions tab and select the action. An apply requires explicitly selecting `apply`.
+`.github/workflows/terraform.yml` runs `fmt`, `init`, and `validate` for all phases on pushes and pull requests. It does not create AWS resources for pull requests. To run a plan or apply, manually dispatch **Terraform** from the GitHub Actions tab and select the action. A plan creates one full, read-only Terraform plan. An apply runs as three ordered stages: phase 5 VPC/subnets, phase 6 internet/NAT routing, then phase 7 hub peering when enabled. It finishes by planning the complete configuration. Phase-specific targeting is used for staged apply; Terraform can report that targeted operations may leave other changes unapplied, so review the final full plan. An apply requires explicitly selecting `apply`.
 
 Configure these repository secrets:
 

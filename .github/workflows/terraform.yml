@@ -92,9 +92,41 @@ jobs:
           -backend-config="dynamodb_table=$TF_STATE_LOCK_TABLE"
           -backend-config="encrypt=true"
 
-      - name: Create Terraform plan
+      - name: Create full Terraform plan
+        if: inputs.action == 'plan'
         run: terraform plan -input=false -out=tfplan
 
-      - name: Apply Terraform plan
+      - name: Read phase 7 setting
+        id: phase7
         if: inputs.action == 'apply'
-        run: terraform apply -input=false -auto-approve tfplan
+        env:
+          TF_VAR_HUB_PEERING: ${{ vars.TF_VAR_HUB_PEERING || '{"enabled":false,"vpc_id":"","cidr_block":"","route_table_ids":[]}' }}
+        run: echo "enabled=$(jq -r '.enabled' <<< "$TF_VAR_HUB_PEERING")" >> "$GITHUB_OUTPUT"
+
+      - name: Phase 5 - plan VPC and subnets
+        if: inputs.action == 'apply'
+        run: terraform plan -input=false -target=module.phase5_vpc -out=phase5.tfplan
+
+      - name: Phase 5 - apply VPC and subnets
+        if: inputs.action == 'apply'
+        run: terraform apply -input=false -auto-approve phase5.tfplan
+
+      - name: Phase 6 - plan internet and NAT routing
+        if: inputs.action == 'apply'
+        run: terraform plan -input=false -target=module.phase6_routing -out=phase6.tfplan
+
+      - name: Phase 6 - apply internet and NAT routing
+        if: inputs.action == 'apply'
+        run: terraform apply -input=false -auto-approve phase6.tfplan
+
+      - name: Phase 7 - plan hub peering
+        if: inputs.action == 'apply' && steps.phase7.outputs.enabled == 'true'
+        run: terraform plan -input=false -target=module.phase7_hub_peering -out=phase7.tfplan
+
+      - name: Phase 7 - apply hub peering
+        if: inputs.action == 'apply' && steps.phase7.outputs.enabled == 'true'
+        run: terraform apply -input=false -auto-approve phase7.tfplan
+
+      - name: Verify complete Terraform configuration
+        if: inputs.action == 'apply'
+        run: terraform plan -input=false
