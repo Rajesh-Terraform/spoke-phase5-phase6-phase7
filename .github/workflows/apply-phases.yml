@@ -1,10 +1,10 @@
-name: Terraform deploy
+name: Apply phases 5, 6, and 7
 
 on:
   workflow_dispatch:
     inputs:
       action:
-        description: "Choose plan or apply. Apply changes AWS resources."
+        description: "Choose plan only or apply all enabled phases to AWS."
         required: true
         type: choice
         options:
@@ -17,7 +17,7 @@ permissions:
 
 jobs:
   deploy:
-    name: AWS Terraform ${{ inputs.action }}
+    name: ${{ inputs.action == 'apply' && 'Apply phases 5, 6, and 7' || 'Plan phases 5, 6, and 7' }}
     if: inputs.action != 'apply' || github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     environment: terraform

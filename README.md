@@ -45,7 +45,7 @@ Peering is configured for VPCs in the same AWS account and region. Supply the hu
 
 ## GitHub Actions
 
-`.github/workflows/terraform.yml` runs formatting checks, initialization, and validation on pushes and pull requests without AWS credentials. AWS deployment is a separate manual workflow, `.github/workflows/terraform-deploy.yml`, so validation runs do not show a skipped deployment job. In **Actions → Terraform deploy → Run workflow**, choose `plan` for a read-only plan or `apply` to deploy. Deployment requires the AWS role and remote state secrets below. An apply runs in order: phase 5 VPC/subnets, phase 6 internet/NAT routing, then phase 7 hub peering when enabled, followed by a full Terraform plan. Review the final plan; Terraform warns that staged targeted operations can leave other changes unapplied.
+`.github/workflows/terraform.yml` runs formatting checks, initialization, and validation on pushes and pull requests without AWS credentials. AWS deployment is a separate manual workflow, `.github/workflows/apply-phases.yml`, so validation runs do not show a skipped deployment job. To deploy, open **Actions → Apply phases 5, 6, and 7 → Run workflow**, select branch `main`, then choose `apply`. Choose `plan` for a read-only plan. Deployment requires the AWS role and remote state secrets below. An apply runs in order: phase 5 VPC/subnets, phase 6 internet/NAT routing, then phase 7 hub peering when enabled, followed by a full Terraform plan. Review the final plan; Terraform warns that staged targeted operations can leave other changes unapplied.
 
 Configure these repository secrets:
 
