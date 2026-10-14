@@ -115,4 +115,4 @@ jobs:
 
       - name: Verify complete Terraform configuration
         if: inputs.action == 'apply'
-        run: terraform plan -input=false
+        run: terraform plan -input=false     
