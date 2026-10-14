@@ -45,11 +45,8 @@ jobs:
         run: terraform validate
 
   deploy:
-    name: Terraform ${{ inputs.action || 'plan' }}
-    if: >-
-      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
-      (github.event_name == 'workflow_dispatch' &&
-      (inputs.action != 'apply' || github.ref == 'refs/heads/main'))
+    name: Terraform ${{ inputs.action }}
+    if: github.event_name == 'workflow_dispatch' && (inputs.action != 'apply' || github.ref == 'refs/heads/main')
     needs: validate
     runs-on: ubuntu-latest
     environment: terraform
