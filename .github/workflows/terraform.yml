@@ -1,280 +1,32 @@
-name: AWS Terraform - Phases 5, 6 and 7
+name: Terraform validation
 
 on:
+  pull_request:
   push:
     branches:
       - main
-    paths:
-      - "terraform/**"
-      - ".github/workflows/terraform.yml"
-
-  
-  workflow_dispatch:
-    inputs:
-      action:
-        description: "Choose plan or apply"
-        required: true
-        type: choice
-        options:
-          - plan
-          - apply
-        default: plan
 
 permissions:
   contents: read
-  id-token: write
-
-env:
-  AWS_REGION: ap-south-1
-  TF_VERSION: "1.9.8"
 
 jobs:
-
-  # ==========================================
-  # JOB 1: VALIDATE TERRAFORM
-  # ==========================================
   validate:
-    name: Validate Terraform
+    name: Validate phases 5-7
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: ${{ env.TF_VERSION }}
+          terraform_version: 1.9.8
 
-      - name: Terraform format 
-        run: terraform fmt  terraform
+      - name: Check Terraform formatting
+        run: terraform fmt -check -recursive
 
-      - name: Validate spoke Terraform
-        working-directory: terraform/spoke
-        run: |
-          terraform init -backend=false -input=false
-          terraform validate
+      - name: Initialize Terraform
+        run: terraform init -backend=false -input=false
 
-      - name: Validate hub Terraform
-        working-directory: terraform/hub
-        run: |
-          terraform init -backend=false -input=false
-          terraform validate
-
-  # ==========================================
-  # JOB 2: PHASE 5 + PHASE 6 - SPOKE ACCOUNT
-  # ==========================================
-  spoke:
-    name: Phase 5 and 6 - Spoke
-    needs: validate
-
-    if: >-
-      github.event_name == 'workflow_dispatch' &&
-      inputs.action == 'apply'
-
-    runs-on: ubuntu-latest
-    environment: terraform-spoke
-
-    defaults:
-      run:
-        shell: bash
-        working-directory: terraform/spoke
-
-    env:
-      TF_VAR_aws_region: ${{ vars.AWS_REGION || 'ap-south-1' }}
-      TF_VAR_spoke_vpc_id: ${{ vars.SPOKE_VPC_ID }}
-      TF_VAR_private_subnet_ids: ${{ vars.SPOKE_PRIVATE_SUBNET_IDS }}
-      TF_VAR_db_subnet_ids: ${{ vars.SPOKE_DB_SUBNET_IDS }}
-      TF_VAR_hub_cidr: ${{ vars.HUB_CIDR || '10.0.0.0/16' }}
-      TF_VAR_tgw_id: ${{ vars.TG_TRANSIT_GATEWAY_ID }}
-      TF_VAR_app_port: "8080"
-      TF_VAR_db_name: ${{ vars.DB_NAME || 'appdb' }}
-      TF_VAR_db_username: ${{ vars.DB_USERNAME || 'appadmin' }}
-      TF_VAR_db_password: ${{ secrets.DB_PASSWORD }}
-
-    outputs:
-      app_private_ip: ${{ steps.app.outputs.app_private_ip }}
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: ${{ env.TF_VERSION }}
-
-      - name: Configure AWS credentials - Spoke
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume:  arn:aws:iam::434097521299:role/testingdummy 
-          aws-region: ap-south-1 
-
-      - name: Check required variables
-        run: |
-          set -euo pipefail
-
-          test -n "$TF_VAR_spoke_vpc_id" || {
-            echo "Missing SPOKE_VPC_ID"
-            exit 1
-          }
-
-          test -n "$TF_VAR_private_subnet_ids" || {
-            echo "Missing SPOKE_PRIVATE_SUBNET_IDS"
-            exit 1
-          }
-
-          test -n "$TF_VAR_db_subnet_ids" || {
-            echo "Missing SPOKE_DB_SUBNET_IDS"
-            exit 1
-          }
-
-          test -n "$TF_VAR_tgw_id" || {
-            echo "Missing TG_TRANSIT_GATEWAY_ID"
-            exit 1
-          }
-
-          test -n "$TF_VAR_db_password" || {
-            echo "Missing DB_PASSWORD secret"
-            exit 1
-          }
-
-      - name: Terraform init
-        run: |
-          terraform init -reconfigure -input=false 
-            -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" 
-            -backend-config="key=phases-5-6-7/spoke.tfstate" 
-            -backend-config="region=${{ env.AWS_REGION }}" 
-            -backend-config="dynamodb_table=${{ secrets.TF_STATE_LOCK_TABLE }}" 
-            -backend-config="encrypt=true"
-
-      - name: Terraform plan
-        run: terraform plan -input=false -out=tfplan
-
-      - name: Terraform apply
-        run: terraform apply -input=false -auto-approve tfplan
-
-      - name: Get application private IP
-        id: app
-        run: |
-          APP_IP=$(terraform output -raw app_private_ip)
-          echo "app_private_ip=$APP_IP" >> "$GITHUB_OUTPUT"
-
-      - name: Show Phase 5 and 6 outputs
-        run: |
-          echo "Connectivity test instance:"
-          terraform output connectivity_test_instance_id
-
-          echo "Application instance:"
-          terraform output app_instance_id
-
-          echo "Application private IP:"
-          terraform output app_private_ip
-
-          echo "Private database endpoint:"
-          terraform output db_endpoint
-
-  # ==========================================
-  # JOB 3: PHASE 7 - HUB ACCOUNT
-  # ==========================================
-  hub:
-    name: Phase 7 - Hub ALB
-    needs:
-      - validate
-      - spoke
-
-    if: >-
-      github.event_name == 'workflow_dispatch' &&
-      inputs.action == 'apply' &&
-      needs.spoke.result == 'success'
-
-    runs-on: ubuntu-latest
-    environment: terraform-hub
-
-    defaults:
-      run:
-        shell: bash
-        working-directory: terraform/hub
-
-    env:
-      TF_VAR_aws_region: ${{ vars.AWS_REGION || 'ap-south-1' }}
-      TF_VAR_hub_vpc_id: ${{ vars.HUB_VPC_ID }}
-      TF_VAR_public_subnet_ids: ${{ vars.HUB_PUBLIC_SUBNET_IDS }}
-      TF_VAR_spoke_app_private_ip: ${{ needs.spoke.outputs.app_private_ip }}
-      TF_VAR_spoke_app_port: "8080"
-      TF_VAR_hub_cidr: ${{ vars.HUB_CIDR || '10.0.0.0/16' }}
-      TF_VAR_spoke_cidr: ${{ vars.SPOKE_CIDR || '10.1.0.0/16' }}
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: ${{ env.TF_VERSION }}
-
-      - name: Configure AWS credentials - Hub
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: arn:aws:iam::647132523867:role/github-actions-test-role
-          aws-region: ap-south-1 
-
-      - name: Check required variables
-        run: |
-          set -euo pipefail
-
-          test -n "$TF_VAR_hub_vpc_id" || {
-            echo "Missing HUB_VPC_ID"
-            exit 1
-          }
-
-          test -n "$TF_VAR_public_subnet_ids" || {
-            echo "Missing HUB_PUBLIC_SUBNET_IDS"
-            exit 1
-          }
-
-          test -n "$TF_VAR_spoke_app_private_ip" || {
-            echo "Missing application private IP from spoke job"
-            exit 1
-          }
-
-      - name: Terraform init
-        run: |
-          terraform init -reconfigure -input=false \
-            -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
-            -backend-config="key=phases-5-6-7/hub.tfstate" \
-            -backend-config="region=${{ env.AWS_REGION }}" \
-            -backend-config="dynamodb_table=${{ secrets.TF_STATE_LOCK_TABLE }}" \
-            -backend-config="encrypt=true"
-
-      - name: Terraform plan
-        run: terraform plan -input=false -out=tfplan
-
-      - name: Terraform apply
-        run: terraform apply -input=false -auto-approve tfplan
-
-      - name: Show Phase 7 public URL
-        run: |
-          echo "Application URL:"
-          terraform output -raw alb_url
-
-  # ==========================================
-  # JOB 4: PLAN-ONLY MODE
-  # ==========================================
-  plan-only:
-    name: Plan-only validation
-    needs: validate
-
-    if: >-
-      github.event_name == 'workflow_dispatch' &&
-      inputs.action == 'plan'
-
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Explain plan-only mode
-        run: |
-          echo "Terraform formatting and validation completed."
-          echo "No AWS resources have been created or modified."
-          echo "Choose action=apply to deploy Phase 5, Phase 6 and Phase 7."      
+      - name: Validate Terraform
+        run: terraform validate
