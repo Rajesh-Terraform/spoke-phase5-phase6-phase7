@@ -1,10 +1,11 @@
+
 name: Apply phases 5, 6, and 7
 
 on:
   workflow_dispatch:
     inputs:
       action:
-        description: "Choose plan only or apply all enabled phases to AWS."
+        description: "Choose plan or apply"
         required: true
         type: choice
         options:
@@ -18,142 +19,234 @@ permissions:
 jobs:
   deploy:
     name: ${{ inputs.action == 'apply' && 'Apply phases 5, 6, and 7' || 'Plan phases 5, 6, and 7' }}
-    if: inputs.action != 'apply' || github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+
+    if: inputs.action != 'apply' || github.ref == 'refs/heads/main'
+
     permissions:
       contents: read
       id-token: write
+
+    defaults:
+      run:
+        shell: bash
+        working-directory: .
+
     env:
-      TF_VAR_aws_region: ${{ vars.AWS_REGION || 'us-east-1' }}
+      AWS_REGION: ${{ vars.AWS_REGION || 'ap-south-1' }}
+
+      TF_VAR_aws_region: ${{ vars.AWS_REGION || 'ap-south-1' }}
       TF_VAR_project_name: ${{ vars.TF_VAR_PROJECT_NAME || 'spoke' }}
       TF_VAR_vpc_cidr_block: ${{ vars.TF_VAR_VPC_CIDR_BLOCK || '10.20.0.0/16' }}
       TF_VAR_availability_zones: ${{ vars.TF_VAR_AVAILABILITY_ZONES || '[]' }}
       TF_VAR_public_subnet_cidrs: ${{ vars.TF_VAR_PUBLIC_SUBNET_CIDRS || '["10.20.1.0/24","10.20.2.0/24"]' }}
       TF_VAR_private_subnet_cidrs: ${{ vars.TF_VAR_PRIVATE_SUBNET_CIDRS || '["10.20.11.0/24","10.20.12.0/24"]' }}
       TF_VAR_hub_peering: ${{ vars.TF_VAR_HUB_PEERING || '{"enabled":false,"vpc_id":"","cidr_block":"","route_table_ids":[]}' }}
-    defaults:
-      run:
-        shell: bash
+
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Verify Terraform files
+        run: |
+          set -euo pipefail
+
+          echo "Current directory:"
+          pwd
+
+          echo "Checking Terraform root files..."
+
+          for file in main.tf providers.tf variables.tf outputs.tf backend.tf; do
+            if [[ ! -f "$file" ]]; then
+              echo "::error::Missing Terraform file: $file"
+              exit 1
+            fi
+          done
+
+          echo "Terraform root files found."
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: 1.6.6
 
-      - name: Check AWS deployment configuration
+      - name: Check AWS role configuration
         env:
           AWS_ROLE_ARN: ${{ secrets.AWS_ROLE_ARN || vars.AWS_ROLE_ARN }}
         run: |
-          if [[ -z "$AWS_ROLE_ARN" ]]; then
-            printf '::error::Set AWS_ROLE_ARN in GitHub Actions secrets or variables before deploying.\n'
+          set -euo pipefail
+
+          if [[ -z "${AWS_ROLE_ARN:-}" ]]; then
+            echo "::error::Configure AWS_ROLE_ARN in GitHub Actions secrets or variables."
             exit 1
           fi
 
-      - name: Configure AWS credentials with OIDC
+          echo "AWS role ARN is configured."
+
+      - name: Configure AWS credentials using OIDC
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN || vars.AWS_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION || 'ap-south-1' }}
 
+      - name: Verify AWS identity
+        run: |
+          set -euo pipefail
+          aws sts get-caller-identity
+
       - name: Create or find Terraform state backend
         id: backend
         env:
-          AWS_REGION: ${{ vars.AWS_REGION || 'ap-south-1' }}
           TF_STATE_BUCKET: ${{ secrets.TF_STATE_BUCKET || vars.TF_STATE_BUCKET }}
           TF_STATE_LOCK_TABLE: ${{ secrets.TF_STATE_LOCK_TABLE || vars.TF_STATE_LOCK_TABLE }}
         run: |
           set -euo pipefail
 
-          account_id="$(aws sts get-caller-identity --query Account --output text)"
-          bucket="${TF_STATE_BUCKET:-spoke-phase567-tfstate-${account_id}-${AWS_REGION}}"
-          lock_table="${TF_STATE_LOCK_TABLE:-spoke-phase567-tf-lock}"
+          ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
 
-          if ! aws s3api head-bucket --bucket "$bucket" >/dev/null 2>&1; then
+          BUCKET="${TF_STATE_BUCKET:-spoke-phase567-tfstate-${ACCOUNT_ID}-${AWS_REGION}}"
+          LOCK_TABLE="${TF_STATE_LOCK_TABLE:-spoke-phase567-tf-lock}"
+
+          echo "Checking S3 state bucket..."
+
+          if ! aws s3api head-bucket --bucket "$BUCKET" 2>/dev/null; then
             if [[ "$AWS_REGION" == "us-east-1" ]]; then
-              aws s3api create-bucket --bucket "$bucket" --region "$AWS_REGION"
+              aws s3api create-bucket \
+                --bucket "$BUCKET" \
+                --region "$AWS_REGION"
             else
               aws s3api create-bucket \
-                --bucket "$bucket" \
+                --bucket "$BUCKET" \
                 --region "$AWS_REGION" \
-                --create-bucket-configuration "LocationConstraint=$AWS_REGION"
+                --create-bucket-configuration \
+                "LocationConstraint=$AWS_REGION"
             fi
           fi
 
           aws s3api put-bucket-versioning \
-            --bucket "$bucket" \
+            --bucket "$BUCKET" \
             --versioning-configuration Status=Enabled
+
           aws s3api put-bucket-encryption \
-            --bucket "$bucket" \
+            --bucket "$BUCKET" \
             --server-side-encryption-configuration \
             '{"Rules":[{"ApplyServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"}}]}'
+
           aws s3api put-public-access-block \
-            --bucket "$bucket" \
+            --bucket "$BUCKET" \
             --public-access-block-configuration \
             BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true
 
-          if ! aws dynamodb describe-table --table-name "$lock_table" >/dev/null 2>&1; then
+          echo "Checking DynamoDB state-lock table..."
+
+          if ! aws dynamodb describe-table \
+            --table-name "$LOCK_TABLE" \
+            --region "$AWS_REGION" >/dev/null 2>&1; then
+
             aws dynamodb create-table \
-              --table-name "$lock_table" \
+              --table-name "$LOCK_TABLE" \
+              --region "$AWS_REGION" \
               --attribute-definitions AttributeName=LockID,AttributeType=S \
               --key-schema AttributeName=LockID,KeyType=HASH \
               --billing-mode PAY_PER_REQUEST
-            aws dynamodb wait table-exists --table-name "$lock_table"
+
+            aws dynamodb wait table-exists \
+              --table-name "$LOCK_TABLE" \
+              --region "$AWS_REGION"
           fi
 
-          echo "bucket=$bucket" >> "$GITHUB_OUTPUT"
-          echo "lock_table=$lock_table" >> "$GITHUB_OUTPUT"
+          echo "bucket=$BUCKET" >> "$GITHUB_OUTPUT"
+          echo "lock_table=$LOCK_TABLE" >> "$GITHUB_OUTPUT"
 
-      - name: Initialize remote state
+      - name: Initialize Terraform
         env:
           TF_STATE_BUCKET: ${{ steps.backend.outputs.bucket }}
           TF_STATE_LOCK_TABLE: ${{ steps.backend.outputs.lock_table }}
-          AWS_REGION: ${{ vars.AWS_REGION || 'ap-south-1' }}
-        run: >-
-          terraform init -reconfigure -input=false
-          -backend-config="bucket=$TF_STATE_BUCKET"
-          -backend-config="key=spoke-phase5-phase6-phase7/terraform.tfstate"
-          -backend-config="region=$AWS_REGION"
-          -backend-config="dynamodb_table=$TF_STATE_LOCK_TABLE"
-          -backend-config="encrypt=true"
+        run: |
+          set -euo pipefail
 
-      - name: Create full Terraform plan
+          terraform init \
+            -reconfigure \
+            -input=false \
+            -backend-config="bucket=$TF_STATE_BUCKET" \
+            -backend-config="key=spoke-phase5-phase6-phase7/terraform.tfstate" \
+            -backend-config="region=$AWS_REGION" \
+            -backend-config="dynamodb_table=$TF_STATE_LOCK_TABLE" \
+            -backend-config="encrypt=true"
+
+      - name: Validate Terraform configuration
+        run: |
+          set -euo pipefail
+          terraform fmt -check -recursive
+          terraform validate
+
+      - name: Generate full Terraform plan
         if: inputs.action == 'plan'
-        run: terraform plan -input=false -out=tfplan
+        run: |
+          set -euo pipefail
+          terraform plan -input=false
 
-      - name: Read phase 7 setting
+      - name: Read Phase 7 configuration
         id: phase7
         if: inputs.action == 'apply'
         env:
-          TF_VAR_HUB_PEERING: ${{ vars.TF_VAR_HUB_PEERING || '{"enabled":false,"vpc_id":"","cidr_block":"","route_table_ids":[]}' }}
-        run: echo "enabled=$(jq -r '.enabled' <<< "$TF_VAR_HUB_PEERING")" >> "$GITHUB_OUTPUT"
+          HUB_PEERING_CONFIG: ${{ vars.TF_VAR_HUB_PEERING || '{"enabled":false,"vpc_id":"","cidr_block":"","route_table_ids":[]}' }}
+        run: |
+          set -euo pipefail
 
-      - name: Phase 5 - plan VPC and subnets
+          ENABLED="$(jq -er '.enabled | select(type == "boolean")' <<< "$HUB_PEERING_CONFIG")"
+
+          echo "enabled=$ENABLED" >> "$GITHUB_OUTPUT"
+
+          echo "Phase 7 enabled: $ENABLED"
+
+      - name: Plan Phase 5 - VPC and subnets
         if: inputs.action == 'apply'
-        run: terraform plan -input=false -target=module.phase5_vpc -out=phase5.tfplan
+        run: |
+          set -euo pipefail
+          terraform plan \
+            -input=false \
+            -target=module.phase5_vpc \
+            -out=phase5.tfplan
 
-      - name: Phase 5 - apply VPC and subnets
+      - name: Apply Phase 5 - VPC and subnets
         if: inputs.action == 'apply'
-        run: terraform apply -input=false -auto-approve phase5.tfplan
+        run: |
+          set -euo pipefail
+          terraform apply -input=false -auto-approve phase5.tfplan
 
-      - name: Phase 6 - plan internet and NAT routing
+      - name: Plan Phase 6 - routing
         if: inputs.action == 'apply'
-        run: terraform plan -input=false -target=module.phase6_routing -out=phase6.tfplan
+        run: |
+          set -euo pipefail
+          terraform plan \
+            -input=false \
+            -target=module.phase6_routing \
+            -out=phase6.tfplan
 
-      - name: Phase 6 - apply internet and NAT routing
+      - name: Apply Phase 6 - routing
         if: inputs.action == 'apply'
-        run: terraform apply -input=false -auto-approve phase6.tfplan
+        run: |
+          set -euo pipefail
+          terraform apply -input=false -auto-approve phase6.tfplan
 
-      - name: Phase 7 - plan hub peering
+      - name: Plan Phase 7 - hub peering
         if: inputs.action == 'apply' && steps.phase7.outputs.enabled == 'true'
-        run: terraform plan -input=false -target=module.phase7_hub_peering -out=phase7.tfplan
+        run: |
+          set -euo pipefail
+          terraform plan \
+            -input=false \
+            -target=module.phase7_hub_peering \
+            -out=phase7.tfplan
 
-      - name: Phase 7 - apply hub peering
+      - name: Apply Phase 7 - hub peering
         if: inputs.action == 'apply' && steps.phase7.outputs.enabled == 'true'
-        run: terraform apply -input=false -auto-approve phase7.tfplan
+        run: |
+          set -euo pipefail
+          terraform apply -input=false -auto-approve phase7.tfplan
 
-      - name: Verify complete Terraform configuration
+      - name: Final Terraform plan
         if: inputs.action == 'apply'
-        run: terraform plan -input=false
+        run: |
+          set -euo pipefail
+          terraform plan -input=false
