@@ -53,7 +53,7 @@ Configure `AWS_ROLE_ARN` in **Settings → Secrets and variables → Actions** a
 - `TF_STATE_BUCKET` (optional): name of an existing S3 bucket for state.
 - `TF_STATE_LOCK_TABLE` (optional): name of an existing DynamoDB table with a string partition key named `LockID`.
 
-For OIDC authentication, create the GitHub OIDC identity provider in AWS IAM with provider URL `https://token.actions.githubusercontent.com` and audience `sts.amazonaws.com`. The IAM role referenced by `AWS_ROLE_ARN` must trust that provider. The deploy job does not use a GitHub Environment, so when dispatched from `main` its OIDC subject is:
+For OIDC authentication, create the GitHub OIDC identity provider in AWS IAM with provider URL `https://token.actions.githubusercontent.com` and audience `sts.amazonaws.com`. The IAM role referenced by `AWS_ROLE_ARN` must trust that provider. This repository was created after GitHub's July 15, 2026 rollout, so its OIDC subject uses the immutable format with owner and repository IDs. When dispatched from `main`, the exact subject is:
 
 ```json
 {
@@ -68,7 +68,7 @@ For OIDC authentication, create the GitHub OIDC identity provider in AWS IAM wit
       "Condition": {
         "StringEquals": {
           "token.actions.githubusercontent.com:aud": "sts.amazonaws.com",
-          "token.actions.githubusercontent.com:sub": "repo:Rajesh-Terraform/spoke-phase5-phase6-phase7:ref:refs/heads/main"
+          "token.actions.githubusercontent.com:sub": "repo:Rajesh-Terraform@308033809/spoke-phase5-phase6-phase7@1418496008:ref:refs/heads/main"
         }
       }
     }
@@ -76,7 +76,7 @@ For OIDC authentication, create the GitHub OIDC identity provider in AWS IAM wit
 }
 ```
 
-Replace `<AWS_ACCOUNT_ID>` with your AWS account ID. Set `AWS_ROLE_ARN` to the full ARN of this role, and ensure the role also has permissions for the S3 state bucket, DynamoDB lock table, and Terraform-managed VPC resources. Store environment-scoped values in the `terraform` environment only if the workflow is later configured to target that environment; currently, use repository secrets or variables.
+Replace `<AWS_ACCOUNT_ID>` with the AWS account ID that owns the IAM role and OIDC provider. Set `AWS_ROLE_ARN` to the full ARN of this role, and ensure the role also has permissions for the S3 state bucket, DynamoDB lock table, and Terraform-managed VPC resources. Store environment-scoped values in the `terraform` environment only if the workflow is later configured to target that environment; currently, use repository secrets or variables.
 
 Configure the repository variable `AWS_REGION` (for example, `ap-south-1`). For a non-default GitHub Actions configuration, set optional repository variables `TF_VAR_PROJECT_NAME`, `TF_VAR_VPC_CIDR_BLOCK`, `TF_VAR_AVAILABILITY_ZONES`, `TF_VAR_PUBLIC_SUBNET_CIDRS`, and `TF_VAR_PRIVATE_SUBNET_CIDRS`. List values must be JSON arrays, such as `["ap-south-1a","ap-south-1b"]`. To enable phase 7 in Actions, set `TF_VAR_HUB_PEERING` to a JSON object, for example `{"enabled":true,"vpc_id":"vpc-0123456789abcdef0","cidr_block":"10.0.0.0/16","route_table_ids":["rtb-0123456789abcdef0"]}`. Applies are allowed only from the `main` branch. The workflow uses one remote state file for this root.
 
